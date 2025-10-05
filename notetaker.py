@@ -54,7 +54,8 @@ def fetch_tasks():
     return pd.read_sql("SELECT * FROM tasks ORDER BY parent_id, sort_order", conn)
 
 def fetch_notes(task_id):
-    return pd.read_sql("SELECT * FROM notes WHERE task_id=? ORDER BY created_at DESC", conn, params=(task_id,))
+    return pd.read_sql("SELECT * FROM notes WHERE task_id=? ORDER BY created_at ASC", conn, params=(task_id,))
+    # ASC → oldest at top, newest at bottom
 
 def add_task(title, type_, parent_id, assignee, status, priority, due_date):
     conn.execute("""INSERT INTO tasks (id,parent_id,title,type,assignee,status,priority,due_date,sort_order,created_at,updated_at)
@@ -113,7 +114,7 @@ st.divider()
 
 # ---------------- Grid Header ----------------
 st.markdown("### 📋 Work Grid")
-h1,h2,h3,h4,h5,h6,h7 = st.columns([3,2,2,2,2,1,2])
+h1,h2,h3,h4,h5,h6,h7 = st.columns([3,2,2,2,2,1,3])
 with h1: st.markdown("**Title**")
 with h2: st.markdown("**👤 Assignee**")
 with h3: st.markdown("**⏱ Status**")
@@ -149,7 +150,7 @@ def render(parent=None, level=0):
                             st.rerun()
 
         else:  # Task row
-            c1,c2,c3,c4,c5,c6,c7 = st.columns([3,2,2,2,2,1,2])
+            c1,c2,c3,c4,c5,c6,c7 = st.columns([3,2,2,2,2,1,3])
             with c1:
                 new_title = st.text_input("", value=r["title"], key=f"title_{tid}", label_visibility="collapsed")
                 if new_title!=r["title"]: update_task(tid, title=new_title)
@@ -172,19 +173,29 @@ def render(parent=None, level=0):
                 if st.button("🗑️", key=f"del_{tid}"):
                     delete_task(tid); st.rerun()
             with c7:
-                with st.expander("💬", expanded=False):
-                    notes = fetch_notes(tid)
+                # ✅ Chat-style Notes panel
+                st.markdown("💬 **Notes**")
+
+                notes = fetch_notes(tid)
+                chat_container = st.container()
+
+                with chat_container:
                     if notes.empty:
                         st.caption("No notes yet. Start the conversation 👇")
                     else:
-                        for _, n in notes.iloc[::-1].iterrows():
+                        for _, n in notes.iterrows():  # oldest → newest
                             sender = r.get("assignee") or "User"
                             initials = sender[:2].upper()
+                            bubble_color = "#d4f8d4" if sender.lower()=="me" else "#f1f1f1"
+                            align = "flex-end" if sender.lower()=="me" else "flex-start"
+                            text_align = "right" if sender.lower()=="me" else "left"
+
                             st.markdown(
                                 f"""
-                                <div style="display:flex;justify-content:flex-start;margin:4px 0;">
-                                  <div style="background:#f1f1f1;padding:8px 12px;
-                                              border-radius:12px;max-width:70%;">
+                                <div style="display:flex;justify-content:{align};margin:4px 0;">
+                                  <div style="background:{bubble_color};padding:8px 12px;
+                                              border-radius:12px;max-width:70%;
+                                              text-align:{text_align};">
                                     <b>{sender}</b><br>{n['content']}<br>
                                     <small style="color:gray">🕒 {n['created_at']}</small>
                                   </div>
@@ -198,15 +209,17 @@ def render(parent=None, level=0):
                                 unsafe_allow_html=True
                             )
 
-                    # ✅ Safe Notes Input
-                    input_key = f"convnote_{tid}"
-                    note_val = st.text_input("Type a note...", key=input_key, label_visibility="collapsed")
-
+                # Sticky input row
+                input_key = f"convnote_{tid}"
+                coln1, coln2 = st.columns([5,1])
+                with coln1:
+                    note_val = st.text_input("Type a note...", key=input_key, label_visibility="collapsed",
+                                             placeholder="Write a message...")
+                with coln2:
                     if st.button("Send", key=f"sendnote_{tid}"):
                         if note_val.strip():
                             add_note(tid, note_val.strip())
-                            # safely clear key
-                            st.session_state.pop(input_key, None)
+                            st.session_state.pop(input_key, None)  # clear safely
                             st.rerun()
 
 render()
