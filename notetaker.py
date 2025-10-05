@@ -148,7 +148,7 @@ with st.expander("➕ Quick Add Task"):
                     status = "blocked"
             insert_task(project_id, section_id, title, desc, status, priority, assignee, str(start), str(due))
             st.success("Task created")
-            st.rerun()  # ✅ updated
+            st.rerun()
 
 # --- Grid View ---
 with tabs[0]:
@@ -157,9 +157,12 @@ with tabs[0]:
     if df.empty:
         st.info("No tasks yet.")
     else:
+        # ✅ Fix types for Streamlit editor
+        for col in ["start_date", "due_date"]:
+            df[col] = pd.to_datetime(df[col], errors="coerce").dt.date
         for col in ["estimate_hours", "actual_hours"]:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors="coerce")
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
         edited = st.data_editor(
             df,
             key="grid_editor",
@@ -188,7 +191,7 @@ with tabs[0]:
             if st.button("🗑️ Delete All Tasks"):
                 for tid in edited["id"].tolist():
                     delete_task(tid)
-                st.rerun()  # ✅ updated
+                st.rerun()
 
 # --- Kanban View ---
 with tabs[1]:
