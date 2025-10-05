@@ -198,20 +198,15 @@ def render(parent=None, level=0):
                                 unsafe_allow_html=True
                             )
 
-                    # session_state draft note
+                    # ✅ Safe note input
                     input_key = f"convnote_{tid}"
-                    if input_key not in st.session_state:
-                        st.session_state[input_key] = ""
+                    note_val = st.text_input("Type a note...", key=input_key, label_visibility="collapsed")
 
-                    coln1, coln2 = st.columns([5,1])
-                    with coln1:
-                        st.text_input("Type a note...", key=input_key, label_visibility="collapsed")
-                    with coln2:
-                        if st.button("Send", key=f"sendnote_{tid}"):
-                            new_note = st.session_state[input_key]
-                            if new_note.strip():
-                                add_note(tid, new_note.strip())
-                                st.session_state[input_key] = ""  # clear
-                                st.rerun()
+                    if st.button("Send", key=f"sendnote_{tid}"):
+                        if note_val.strip():
+                            add_note(tid, note_val.strip())
+                            # reset input field safely
+                            st.session_state[input_key] = ""
+                            st.rerun()
 
 render()
