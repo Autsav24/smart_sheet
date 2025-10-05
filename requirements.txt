@@ -1,3 +1,6 @@
-streamlit
+streamlit>=1.38
 pandas
+sqlalchemy>=2.0
+pydantic
+python-dateutil
 plotly
