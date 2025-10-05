@@ -148,7 +148,7 @@ with st.expander("➕ Quick Add Task"):
                     status = "blocked"
             insert_task(project_id, section_id, title, desc, status, priority, assignee, str(start), str(due))
             st.success("Task created")
-            st.experimental_rerun()
+            st.rerun()  # ✅ updated
 
 # --- Grid View ---
 with tabs[0]:
@@ -188,7 +188,7 @@ with tabs[0]:
             if st.button("🗑️ Delete All Tasks"):
                 for tid in edited["id"].tolist():
                     delete_task(tid)
-                st.experimental_rerun()
+                st.rerun()  # ✅ updated
 
 # --- Kanban View ---
 with tabs[1]:
