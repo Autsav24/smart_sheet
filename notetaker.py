@@ -112,6 +112,42 @@ def update_children_sort(parent_id: Optional[str], ordered_ids: List[str]):
         conn.execute("UPDATE tasks SET sort_order=?, updated_at=? WHERE id=?", (idx, now(), tid))
     conn.commit()
 
+def update_item_fields(item_id: str, *,  # inline edit saver
+                       title: Optional[str] = None,
+                       assignee: Optional[str] = None,
+                       status: Optional[str] = None,
+                       priority: Optional[str] = None,
+                       start_date: Optional[date] = None,
+                       due_date: Optional[date] = None):
+    sets = []
+    params = {}
+    if title is not None:
+        sets.append("title=:title")
+        params["title"] = title.strip()
+    if assignee is not None:
+        sets.append("assignee=:assignee")
+        params["assignee"] = assignee.strip()
+    if status is not None:
+        sets.append("status=:status")
+        params["status"] = status
+    if priority is not None:
+        sets.append("priority=:priority")
+        params["priority"] = priority
+    if start_date is not None:
+        sets.append("start_date=:start_date")
+        params["start_date"] = str(start_date) if start_date else None
+    if due_date is not None:
+        sets.append("due_date=:due_date")
+        params["due_date"] = str(due_date) if due_date else None
+
+    if sets:
+        sets.append("updated_at=:ua")
+        params["ua"] = now()
+        sql = f"UPDATE tasks SET {', '.join(sets)} WHERE id=:id"
+        params["id"] = item_id
+        conn.execute(sql, params)
+        conn.commit()
+
 # ----- Tree utilities -----
 def build_index(df: pd.DataFrame) -> Dict[str, List[str]]:
     df = df.copy()
@@ -128,10 +164,10 @@ def ancestors(df: pd.DataFrame, item_id: str) -> List[str]:
     cur = item_id
     while True:
         row = row_map.get(cur)
-        if row is None:   # ✅ fix
+        if row is None:
             break
         pid = row["parent_id"]
-        if pd.isna(pid):  # ✅ root
+        if pd.isna(pid):
             break
         out.append(pid)
         cur = pid
@@ -143,7 +179,7 @@ def breadcrumb(df: pd.DataFrame, item_id: str) -> str:
     cur = item_id
     while True:
         row = row_map.get(cur)
-        if row is None:   # ✅ fix
+        if row is None:
             break
         parts.append(str(row["title"]))
         pid = row["parent_id"]
@@ -286,7 +322,8 @@ def render_subtree(parent_id: Optional[str], level: int = 0):
             continue
         st.markdown(row_label(r, level), unsafe_allow_html=True)
 
-        ac1, ac2, ac3 = st.columns([5, 1, 2])
+        # Action row: Delete | Move | Edit
+        ac1, ac2, ac3, ac4 = st.columns([4, 1, 2, 3])
         with ac2:
             if st.button("🗑️", key=f"del_{cid}"):
                 delete_item(cid)
@@ -304,6 +341,14 @@ def render_subtree(parent_id: Optional[str], level: int = 0):
             if st.button("Move", key=f"mvbtn_{cid}"):
                 move_item(cid, new_parent_id)
                 st.rerun()
+        with ac4:
+            with st.expander("✏️ Edit Section", expanded=False):
+                new_title = st.text_input("Title", value=r["title"], key=f"edit_title_{cid}")
+                if st.button("Save", key=f"edit_save_{cid}"):
+                    if new_title.strip():
+                        update_item_fields(cid, title=new_title)
+                        st.success("Updated")
+                        st.rerun()
 
         # Drag-drop children
         child_ids = index.get(cid, [])
@@ -330,7 +375,9 @@ def render_subtree(parent_id: Optional[str], level: int = 0):
         r = row_map[cid]
         st.markdown(row_label(r, level), unsafe_allow_html=True)
 
-        c1, c2, c3 = st.columns([5, 1, 2])
+        # Action row: Notes | Delete | Move | Edit
+        c1, c2, c3, c4 = st.columns([4, 1, 2, 3])
+
         with c1:
             with st.expander(f"🗒 Notes for {r['title']}", expanded=(st.session_state["selected_task"] == cid)):
                 note_text = st.text_area("Add Note", key=f"note_{cid}")
@@ -345,10 +392,12 @@ def render_subtree(parent_id: Optional[str], level: int = 0):
                 else:
                     for _, n in notes_df.iterrows():
                         st.markdown(f"- {n['content']}  \n  <small>🕒 {n['created_at']}</small>", unsafe_allow_html=True)
+
         with c2:
             if st.button("🗑️", key=f"del_{cid}"):
                 delete_item(cid)
                 st.rerun()
+
         with c3:
             parent_choices = ["(root)"]
             id_map2 = {}
@@ -362,6 +411,40 @@ def render_subtree(parent_id: Optional[str], level: int = 0):
             if st.button("Move", key=f"mvbtn_{cid}"):
                 move_item(cid, new_parent_id)
                 st.rerun()
+
+        with c4:
+            with st.expander("✏️ Edit Task", expanded=False):
+                et_title = st.text_input("Title", value=r["title"], key=f"et_title_{cid}")
+                et_assignee = st.text_input("Assignee", value=r.get("assignee") or "", key=f"et_assignee_{cid}")
+                et_status = st.selectbox("Status", STATUS_OPTS,
+                                         index=max(0, STATUS_OPTS.index(r.get("status") or "todo")),
+                                         key=f"et_status_{cid}")
+                et_priority = st.selectbox("Priority", PRIORITY_OPTS,
+                                           index=max(0, PRIORITY_OPTS.index(r.get("priority") or "medium")),
+                                           key=f"et_priority_{cid}")
+                # Parse dates safely
+                def parse_date(val):
+                    if val:
+                        try:
+                            return pd.to_datetime(val, errors="coerce").date()
+                        except Exception:
+                            return None
+                    return None
+                et_start = st.date_input("Start date", value=parse_date(r.get("start_date")), key=f"et_start_{cid}")
+                et_due = st.date_input("Due date", value=parse_date(r.get("due_date")), key=f"et_due_{cid}")
+
+                if st.button("Save", key=f"et_save_{cid}"):
+                    update_item_fields(
+                        cid,
+                        title=et_title,
+                        assignee=et_assignee,
+                        status=et_status,
+                        priority=et_priority,
+                        start_date=et_start,
+                        due_date=et_due
+                    )
+                    st.success("Updated")
+                    st.rerun()
 
 # Render root
 render_subtree(None, 0)
