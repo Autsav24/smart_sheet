@@ -173,53 +173,53 @@ def render(parent=None, level=0):
                 if st.button("🗑️", key=f"del_{tid}"):
                     delete_task(tid); st.rerun()
             with c7:
-                # ✅ Chat-style Notes panel
-                st.markdown("💬 **Notes**")
+                # ✅ Collapsed chat-style Notes
+                with st.expander("💬 Notes", expanded=False):
+                    notes = fetch_notes(tid)
+                    chat_container = st.container()
 
-                notes = fetch_notes(tid)
-                chat_container = st.container()
+                    with chat_container:
+                        if notes.empty:
+                            st.caption("No notes yet. Start the conversation 👇")
+                        else:
+                            for _, n in notes.iterrows():  # oldest → newest
+                                sender = r.get("assignee") or "User"
+                                initials = sender[:2].upper()
+                                bubble_color = "#d4f8d4" if sender.lower()=="me" else "#f1f1f1"
+                                align = "flex-end" if sender.lower()=="me" else "flex-start"
+                                text_align = "right" if sender.lower()=="me" else "left"
 
-                with chat_container:
-                    if notes.empty:
-                        st.caption("No notes yet. Start the conversation 👇")
-                    else:
-                        for _, n in notes.iterrows():  # oldest → newest
-                            sender = r.get("assignee") or "User"
-                            initials = sender[:2].upper()
-                            bubble_color = "#d4f8d4" if sender.lower()=="me" else "#f1f1f1"
-                            align = "flex-end" if sender.lower()=="me" else "flex-start"
-                            text_align = "right" if sender.lower()=="me" else "left"
+                                st.markdown(
+                                    f"""
+                                    <div style="display:flex;justify-content:{align};margin:4px 0;">
+                                      <div style="background:{bubble_color};padding:8px 12px;
+                                                  border-radius:12px;max-width:70%;
+                                                  text-align:{text_align};">
+                                        <b>{sender}</b><br>{n['content']}<br>
+                                        <small style="color:gray">🕒 {n['created_at']}</small>
+                                      </div>
+                                      <div style="background:#888;color:white;
+                                                  border-radius:50%;width:28px;height:28px;
+                                                  display:flex;align-items:center;
+                                                  justify-content:center;margin-left:6px;
+                                                  font-size:11px;">{initials}</div>
+                                    </div>
+                                    """,
+                                    unsafe_allow_html=True
+                                )
 
-                            st.markdown(
-                                f"""
-                                <div style="display:flex;justify-content:{align};margin:4px 0;">
-                                  <div style="background:{bubble_color};padding:8px 12px;
-                                              border-radius:12px;max-width:70%;
-                                              text-align:{text_align};">
-                                    <b>{sender}</b><br>{n['content']}<br>
-                                    <small style="color:gray">🕒 {n['created_at']}</small>
-                                  </div>
-                                  <div style="background:#888;color:white;
-                                              border-radius:50%;width:28px;height:28px;
-                                              display:flex;align-items:center;
-                                              justify-content:center;margin-left:6px;
-                                              font-size:11px;">{initials}</div>
-                                </div>
-                                """,
-                                unsafe_allow_html=True
-                            )
-
-                # Sticky input row
-                input_key = f"convnote_{tid}"
-                coln1, coln2 = st.columns([5,1])
-                with coln1:
-                    note_val = st.text_input("Type a note...", key=input_key, label_visibility="collapsed",
-                                             placeholder="Write a message...")
-                with coln2:
-                    if st.button("Send", key=f"sendnote_{tid}"):
-                        if note_val.strip():
-                            add_note(tid, note_val.strip())
-                            st.session_state.pop(input_key, None)  # clear safely
-                            st.rerun()
+                    # Input row
+                    input_key = f"convnote_{tid}"
+                    coln1, coln2 = st.columns([5,1])
+                    with coln1:
+                        note_val = st.text_input("Type a note...", key=input_key,
+                                                 label_visibility="collapsed",
+                                                 placeholder="Write a message...")
+                    with coln2:
+                        if st.button("Send", key=f"sendnote_{tid}"):
+                            if note_val.strip():
+                                add_note(tid, note_val.strip())
+                                st.session_state.pop(input_key, None)  # clear safely
+                                st.rerun()
 
 render()
