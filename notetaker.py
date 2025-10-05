@@ -88,7 +88,7 @@ def add_note(task_id, content):
 df = fetch_tasks()
 row_map = {r["id"]: r for _,r in df.iterrows()}
 
-# build children fresh each rerun (avoid duplicates)
+# build children fresh each rerun
 children = {}
 for _,r in df.iterrows():
     children.setdefault(r["parent_id"], []).append(r["id"])
@@ -128,10 +128,10 @@ def render(parent=None, level=0):
         r = row_map[tid]
 
         if r["type"]=="section":
-            # ✅ collapse with toggle (persists state)
-            expanded = st.toggle(f"📂 {r['title']}", key=f"toggle_{tid}", value=False, label_visibility="visible")
-            col_s1, col_s2 = st.columns([6,1])
-            with col_s2:
+            cols = st.columns([7,1])
+            with cols[0]:
+                expanded = st.toggle(f"📂 {r['title']}", key=f"toggle_{tid}", value=False)
+            with cols[1]:
                 if st.button("🗑️", key=f"del_sec_{tid}"):
                     delete_task(tid)
                     st.rerun()
@@ -189,7 +189,7 @@ def render(parent=None, level=0):
                                 unsafe_allow_html=True
                             )
 
-                    # note input fix
+                    # session_state draft note
                     input_key = f"convnote_{tid}"
                     if input_key not in st.session_state:
                         st.session_state[input_key] = ""
