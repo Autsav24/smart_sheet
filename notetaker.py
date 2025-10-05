@@ -2,9 +2,8 @@ import streamlit as st
 import pandas as pd
 import sqlite3
 import uuid
-from datetime import datetime, date
+from datetime import datetime
 from typing import Optional, List, Dict
-from streamlit_sortables import sort_items
 
 # ---------------- CONFIG ----------------
 st.set_page_config(page_title="IWMP - Smartsheet Style", layout="wide")
@@ -113,7 +112,18 @@ if st.button("Add"):
 
 st.divider()
 
-# Render tree
+# ---------------- Grid Header ----------------
+st.markdown("### 📋 Work Grid")
+h1,h2,h3,h4,h5,h6,h7 = st.columns([3,2,2,2,2,1,2])
+with h1: st.markdown("**Title**")
+with h2: st.markdown("**👤 Assignee**")
+with h3: st.markdown("**⏱ Status**")
+with h4: st.markdown("**🚩 Priority**")
+with h5: st.markdown("**📅 Due**")
+with h6: st.markdown("**🗑️**")
+with h7: st.markdown("**💬 Notes**")
+
+# ---------------- Render Tree ----------------
 def render(parent=None, level=0):
     for tid in children.get(parent, []):
         r = row_map[tid]
@@ -122,41 +132,47 @@ def render(parent=None, level=0):
         if r["type"]=="section":
             expanded = tid in st.session_state["expanded_sections"]
             icon = "▼" if expanded else "▶"
-            if st.button(f"{icon} 📂 {r['title']}", key=f"sec_{tid}"):
-                if expanded: st.session_state["expanded_sections"].remove(tid)
-                else: st.session_state["expanded_sections"].add(tid)
-                st.rerun()
+
+            col_s1, col_s2 = st.columns([6,1])
+            with col_s1:
+                if st.button(f"{icon} 📂 {r['title']}", key=f"sec_{tid}"):
+                    if expanded: st.session_state["expanded_sections"].remove(tid)
+                    else: st.session_state["expanded_sections"].add(tid)
+                    st.rerun()
+            with col_s2:
+                if st.button("🗑️", key=f"del_sec_{tid}"):
+                    delete_task(tid)  # cascade delete children
+                    st.rerun()
+
             if expanded: render(tid, level+1)
 
         else:  # Task row
             c1,c2,c3,c4,c5,c6,c7 = st.columns([3,2,2,2,2,1,2])
             with c1:
-                new_title = st.text_input("Title", value=r["title"], key=f"title_{tid}")
+                new_title = st.text_input("", value=r["title"], key=f"title_{tid}")
                 if new_title!=r["title"]: update_task(tid, title=new_title)
             with c2:
-                assignee = st.text_input("👤", value=r.get("assignee") or "", key=f"asg_{tid}")
+                assignee = st.text_input("", value=r.get("assignee") or "", key=f"asg_{tid}")
                 if assignee!=(r.get("assignee") or ""): update_task(tid, assignee=assignee)
             with c3:
-                status = st.selectbox("⏱", STATUS_OPTS, index=STATUS_OPTS.index(r.get("status") or "todo"), key=f"st_{tid}")
+                status = st.selectbox("", STATUS_OPTS, index=STATUS_OPTS.index(r.get("status") or "todo"), key=f"st_{tid}")
                 if status!=(r.get("status") or "todo"): update_task(tid, status=status)
             with c4:
-                priority = st.selectbox("🚩", PRIORITY_OPTS, index=PRIORITY_OPTS.index(r.get("priority") or "medium"), key=f"pr_{tid}")
+                priority = st.selectbox("", PRIORITY_OPTS, index=PRIORITY_OPTS.index(r.get("priority") or "medium"), key=f"pr_{tid}")
                 if priority!=(r.get("priority") or "medium"): update_task(tid, priority=priority)
             with c5:
                 due = pd.to_datetime(r.get("due_date"), errors="coerce").date() if r.get("due_date") else None
-                due_new = st.date_input("📅", value=due, key=f"due_{tid}")
+                due_new = st.date_input("", value=due, key=f"due_{tid}")
                 if due_new!=(due): update_task(tid, due_date=str(due_new) if due_new else None)
             with c6:
                 if st.button("🗑️", key=f"del_{tid}"):
                     delete_task(tid); st.rerun()
-
             with c7:
-                with st.expander("💬 Notes", expanded=False):
+                with st.expander("💬", expanded=False):
                     notes = fetch_notes(tid)
                     if notes.empty:
                         st.caption("No notes yet. Start the conversation 👇")
                     else:
-                        # Show oldest first
                         for _, n in notes.iloc[::-1].iterrows():
                             sender = r.get("assignee") or "User"
                             initials = sender[:2].upper()
@@ -185,13 +201,20 @@ def render(parent=None, level=0):
                                 unsafe_allow_html=True
                             )
 
+                    # session_state draft note
+                    input_key = f"convnote_{tid}"
+                    if input_key not in st.session_state:
+                        st.session_state[input_key] = ""
+
                     coln1, coln2 = st.columns([5,1])
                     with coln1:
-                        new_note = st.text_input("Type a note...", key=f"convnote_{tid}")
+                        st.text_input("Type a note...", key=input_key, label_visibility="collapsed")
                     with coln2:
                         if st.button("Send", key=f"sendnote_{tid}"):
+                            new_note = st.session_state[input_key]
                             if new_note.strip():
                                 add_note(tid, new_note.strip())
+                                st.session_state[input_key] = ""  # clear
                                 st.rerun()
 
 render()
