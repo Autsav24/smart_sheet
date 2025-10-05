@@ -93,7 +93,7 @@ children = {}
 for _,r in df.iterrows():
     children.setdefault(r["parent_id"], []).append(r["id"])
 
-# ---------------- Quick Add ----------------
+# ---------------- Quick Add (global) ----------------
 st.subheader("➕ Quick Add")
 col1,col2,col3 = st.columns([3,1,3])
 with col1: title_new = st.text_input("Title", key="newtitle")
@@ -138,6 +138,15 @@ def render(parent=None, level=0):
 
             if expanded:
                 render(tid, level+1)
+
+                # ✅ Inline Add inside section
+                with st.expander(f"➕ Add inside {r['title']}", expanded=False):
+                    title_child = st.text_input("Title", key=f"addtitle_{tid}")
+                    type_child = st.radio("Type", ["task", "section"], key=f"addtype_{tid}", horizontal=True)
+                    if st.button("Add", key=f"addbtn_{tid}"):
+                        if title_child.strip():
+                            add_task(title_child, type_child, r["id"], "", "todo", "medium", None)
+                            st.rerun()
 
         else:  # Task row
             c1,c2,c3,c4,c5,c6,c7 = st.columns([3,2,2,2,2,1,2])
