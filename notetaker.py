@@ -16,7 +16,6 @@ if "selected_task" not in st.session_state:
 
 # -------------------- DB Setup ----------------------
 def get_conn():
-    # keep one connection; enable FK cascade
     conn = sqlite3.connect("iwmp_grid.db", check_same_thread=False)
     conn.execute("PRAGMA foreign_keys = ON;")
     return conn
@@ -49,7 +48,7 @@ def ensure_schema():
             created_at TEXT
         )
     """)
-    # add missing columns if migrating from older DB
+    # add missing columns if migrating
     cols = pd.read_sql("PRAGMA table_info(tasks)", conn)["name"].tolist()
     if "sort_order" not in cols:
         cur.execute("ALTER TABLE tasks ADD COLUMN sort_order INTEGER DEFAULT 0")
@@ -104,7 +103,6 @@ def delete_item(item_id: str):
     conn.commit()
 
 def move_item(item_id: str, new_parent_id: Optional[str]):
-    # put at end of destination
     conn.execute("UPDATE tasks SET parent_id=?, sort_order=?, updated_at=? WHERE id=?",
                  (new_parent_id, next_sort_order(new_parent_id), now(), item_id))
     conn.commit()
@@ -116,7 +114,6 @@ def update_children_sort(parent_id: Optional[str], ordered_ids: List[str]):
 
 # ----- Tree utilities -----
 def build_index(df: pd.DataFrame) -> Dict[str, List[str]]:
-    """Map parent_id -> [child_ids in current order]."""
     df = df.copy()
     df.sort_values(["sort_order", "created_at"], inplace=True)
     idx: Dict[str, List[str]] = {}
@@ -126,30 +123,32 @@ def build_index(df: pd.DataFrame) -> Dict[str, List[str]]:
     return idx
 
 def ancestors(df: pd.DataFrame, item_id: str) -> List[str]:
-    """Return list of ancestor IDs up to root."""
     out: List[str] = []
     row_map = {r["id"]: r for _, r in df.iterrows()}
     cur = item_id
     while True:
         row = row_map.get(cur)
-        if not row: break
+        if row is None:   # ✅ fix
+            break
         pid = row["parent_id"]
-        if pid is None: break
+        if pd.isna(pid):  # ✅ root
+            break
         out.append(pid)
         cur = pid
     return out
 
 def breadcrumb(df: pd.DataFrame, item_id: str) -> str:
-    """Breadcrumb label for select boxes."""
     row_map = {r["id"]: r for _, r in df.iterrows()}
     parts = []
     cur = item_id
     while True:
         row = row_map.get(cur)
-        if not row: break
-        parts.append(row["title"])
+        if row is None:   # ✅ fix
+            break
+        parts.append(str(row["title"]))
         pid = row["parent_id"]
-        if pid is None: break
+        if pd.isna(pid):
+            break
         cur = pid
     return " / ".join(reversed(parts))
 
@@ -157,12 +156,10 @@ def breadcrumb(df: pd.DataFrame, item_id: str) -> str:
 df_all = fetch_tasks_df()
 
 if not df_all.empty:
-    # counts
     critical_count = (df_all["priority"] == "critical").sum()
     medium_count = (df_all["priority"] == "medium").sum()
     done_count = (df_all["status"] == "done").sum()
 
-    # overdue critical: critical & not done & due < today
     dc = df_all.dropna(subset=["due_date"]).copy()
     dc["due_date_d"] = pd.to_datetime(dc["due_date"], errors="coerce").dt.date
     overdue_critical_df = dc[(dc["priority"] == "critical") &
@@ -178,7 +175,6 @@ if not df_all.empty:
 
     st.divider()
 
-    # Overdue panel with clickable jump
     if overdue_count > 0:
         st.subheader("⚡ Overdue Critical Tasks")
         for _, row in overdue_critical_df.iterrows():
@@ -209,7 +205,6 @@ with st.expander("➕ Add Section / Task", expanded=False):
     with colD:
         due_new = st.date_input("Due date", value=None)
 
-    # parent select with breadcrumbs (allow None)
     df_all = fetch_tasks_df()
     parent_choices = ["(root)"]
     id_map = {}
@@ -220,7 +215,7 @@ with st.expander("➕ Add Section / Task", expanded=False):
     sel_parent_label = st.selectbox("Parent", parent_choices)
     sel_parent_id = None if sel_parent_label == "(root)" else id_map[sel_parent_label]
 
-    if st.button("Add", type="primary", use_container_width=False):
+    if st.button("Add", type="primary"):
         if not title_new.strip():
             st.error("Title is required.")
         else:
@@ -234,9 +229,7 @@ filter_choice = st.selectbox("Filter", ["All", "Critical", "Medium", "Done"], in
 
 df_all = fetch_tasks_df()
 
-# Select visible tasks by filter (and include their ancestors so hierarchy shows)
 visible_ids: Set[str] = set(df_all["id"].tolist())
-
 if filter_choice != "All":
     filtered = df_all.copy()
     if filter_choice == "Critical":
@@ -246,7 +239,6 @@ if filter_choice != "All":
     elif filter_choice == "Done":
         filtered = filtered[filtered["status"] == "done"]
     visible_ids = set(filtered["id"].tolist())
-    # add ancestors so tree path is visible
     for tid in list(visible_ids):
         for anc in ancestors(df_all, tid):
             visible_ids.add(anc)
@@ -258,7 +250,6 @@ row_map = {r["id"]: r for _, r in df_all.iterrows()}
 def row_label(r: pd.Series, level: int) -> str:
     indent = "&nbsp;" * (level * 6)
     icon = "📂" if r["type"] == "section" else "📝"
-    # overdue critical highlight
     highlight = ""
     if r["type"] == "task":
         try:
@@ -268,102 +259,39 @@ def row_label(r: pd.Series, level: int) -> str:
                     highlight = "background-color:#ffebeb; border-radius:4px; padding:2px 6px;"
         except Exception:
             pass
-    left = f"{indent}{icon} <b>{st.session_state.get('highlight_title', r['title']) if r['title'] else ''}</b>"
+    left = f"{indent}{icon} <b>{r['title']}</b>"
     meta = f" — 👤 {r.get('assignee','') or '-'} | ⏱ {r.get('status','-')} | 🚩 {r.get('priority','-')}"
     style = f"style='{highlight}'" if highlight else ""
     return f"<div {style}>{left}{meta}</div>"
 
+def descendants_have_visible(section_id: str) -> bool:
+    stack = [section_id]
+    while stack:
+        cur = stack.pop()
+        for ch in index.get(cur, []):
+            if ch in visible_ids:
+                return True
+            stack.append(ch)
+    return False
+
 def render_subtree(parent_id: Optional[str], level: int = 0):
     children = index.get(parent_id, [])
-    # Split to render sections first, then tasks (nice UX)
     sects = [cid for cid in children if row_map[cid]["type"] == "section"]
     tasks = [cid for cid in children if row_map[cid]["type"] == "task"]
 
     # --- Sections ---
     for cid in sects:
         r = row_map[cid]
-        if cid not in visible_ids:  # respect filter
-            # still render if it has any visible descendant
-            desc = descendants_have_visible(cid)
-            if not desc:
-                continue
+        if cid not in visible_ids and not descendants_have_visible(cid):
+            continue
         st.markdown(row_label(r, level), unsafe_allow_html=True)
 
-        # Actions for a section
         ac1, ac2, ac3 = st.columns([5, 1, 2])
         with ac2:
             if st.button("🗑️", key=f"del_{cid}"):
                 delete_item(cid)
                 st.rerun()
         with ac3:
-            # Move section
-            parent_choices = ["(root)"]
-            id_map2 = {}
-            for _, rr in df_all.iterrows():
-                if rr["id"] == cid:  # can't move under itself
-                    continue
-                parent_choices.append(breadcrumb(df_all, rr["id"]))
-                id_map2[parent_choices[-1]] = rr["id"]
-            new_parent_label = st.selectbox("Move to", parent_choices, key=f"mvsel_{cid}")
-            new_parent_id = None if new_parent_label == "(root)" else id_map2[new_parent_label]
-            if st.button("Move", key=f"mvbtn_{cid}"):
-                move_item(cid, new_parent_id)
-                st.rerun()
-
-        # Drag & drop ordering for immediate children
-        child_ids = index.get(cid, [])
-        if child_ids:
-            # Build labeled items (unique by appending short id)
-            labels = []
-            id_by_label = {}
-            for ch in child_ids:
-                rr = row_map[ch]
-                label = f"{'📂' if rr['type']=='section' else '📝'} {rr['title']} [{ch[:6]}]"
-                labels.append(label)
-                id_by_label[label] = ch
-
-            new_labels = sort_items(labels, direction="vertical", key=f"sort_{cid}")
-            if new_labels != labels:
-                new_order_ids = [id_by_label[lbl] for lbl in new_labels]
-                update_children_sort(cid, new_order_ids)
-                st.rerun()
-
-        # Recurse
-        render_subtree(cid, level + 1)
-
-    # --- Tasks ---
-    for cid in tasks:
-        if cid not in visible_ids:
-            continue
-        r = row_map[cid]
-        st.markdown(row_label(r, level), unsafe_allow_html=True)
-
-        # Notes / Delete / Move actions
-        c1, c2, c3 = st.columns([5, 1, 2])
-
-        with c1:
-            with st.expander(f"🗒 Notes for {r['title']}",
-                             expanded=(st.session_state["selected_task"] == cid)):
-                note_text = st.text_area("Add Note", key=f"note_{cid}")
-                if st.button("Save Note", key=f"save_{cid}"):
-                    if note_text.strip():
-                        add_note(cid, note_text)
-                        st.session_state["selected_task"] = cid
-                        st.rerun()
-                notes_df = fetch_notes(cid)
-                if notes_df.empty:
-                    st.caption("No notes yet.")
-                else:
-                    for _, n in notes_df.iterrows():
-                        st.markdown(f"- {n['content']}  \n  <small>🕒 {n['created_at']}</small>", unsafe_allow_html=True)
-
-        with c2:
-            if st.button("🗑️", key=f"del_{cid}"):
-                delete_item(cid)
-                st.rerun()
-
-        with c3:
-            # move task
             parent_choices = ["(root)"]
             id_map2 = {}
             for _, rr in df_all.iterrows():
@@ -377,16 +305,63 @@ def render_subtree(parent_id: Optional[str], level: int = 0):
                 move_item(cid, new_parent_id)
                 st.rerun()
 
-def descendants_have_visible(section_id: str) -> bool:
-    """Check if any descendant of a section is marked visible by filter."""
-    stack = [section_id]
-    while stack:
-        cur = stack.pop()
-        for ch in index.get(cur, []):
-            if ch in visible_ids:
-                return True
-            stack.append(ch)
-    return False
+        # Drag-drop children
+        child_ids = index.get(cid, [])
+        if child_ids:
+            labels = []
+            id_by_label = {}
+            for ch in child_ids:
+                rr = row_map[ch]
+                label = f"{'📂' if rr['type']=='section' else '📝'} {rr['title']} [{ch[:6]}]"
+                labels.append(label)
+                id_by_label[label] = ch
+            new_labels = sort_items(labels, direction="vertical", key=f"sort_{cid}")
+            if new_labels != labels:
+                new_order_ids = [id_by_label[lbl] for lbl in new_labels]
+                update_children_sort(cid, new_order_ids)
+                st.rerun()
 
-# Render root-level
-render_subtree(parent_id=None, level=0)
+        render_subtree(cid, level + 1)
+
+    # --- Tasks ---
+    for cid in tasks:
+        if cid not in visible_ids:
+            continue
+        r = row_map[cid]
+        st.markdown(row_label(r, level), unsafe_allow_html=True)
+
+        c1, c2, c3 = st.columns([5, 1, 2])
+        with c1:
+            with st.expander(f"🗒 Notes for {r['title']}", expanded=(st.session_state["selected_task"] == cid)):
+                note_text = st.text_area("Add Note", key=f"note_{cid}")
+                if st.button("Save Note", key=f"save_{cid}"):
+                    if note_text.strip():
+                        add_note(cid, note_text)
+                        st.session_state["selected_task"] = cid
+                        st.rerun()
+                notes_df = fetch_notes(cid)
+                if notes_df.empty:
+                    st.caption("No notes yet.")
+                else:
+                    for _, n in notes_df.iterrows():
+                        st.markdown(f"- {n['content']}  \n  <small>🕒 {n['created_at']}</small>", unsafe_allow_html=True)
+        with c2:
+            if st.button("🗑️", key=f"del_{cid}"):
+                delete_item(cid)
+                st.rerun()
+        with c3:
+            parent_choices = ["(root)"]
+            id_map2 = {}
+            for _, rr in df_all.iterrows():
+                if rr["id"] == cid:
+                    continue
+                parent_choices.append(breadcrumb(df_all, rr["id"]))
+                id_map2[parent_choices[-1]] = rr["id"]
+            new_parent_label = st.selectbox("Move to", parent_choices, key=f"mvsel_{cid}")
+            new_parent_id = None if new_parent_label == "(root)" else id_map2[new_parent_label]
+            if st.button("Move", key=f"mvbtn_{cid}"):
+                move_item(cid, new_parent_id)
+                st.rerun()
+
+# Render root
+render_subtree(None, 0)
