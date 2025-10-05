@@ -71,13 +71,13 @@ def add_task(title, type_, parent_id, assignee, status, priority, due_date):
 
 def update_task(task_id, **fields):
     sets = []
-    params = {}
+    vals = []
     for k,v in fields.items():
         sets.append(f"{k}=?")
-        params[k] = v
+        vals.append(v)
     if sets:
+        vals.extend([now(), task_id])
         sql = f"UPDATE tasks SET {', '.join(sets)}, updated_at=? WHERE id=?"
-        vals = list(params.values())+[now(), task_id]
         conn.execute(sql, vals)
         conn.commit()
 
@@ -102,9 +102,10 @@ st.subheader("➕ Quick Add")
 col1,col2,col3 = st.columns([3,1,2])
 with col1: title_new = st.text_input("Title", key="newtitle")
 with col2: type_new = st.selectbox("Type", ["task","section"], key="newtype")
-with col3: parent = st.selectbox("Parent", ["(root)"]+[row_map[i]["title"] for i in df[df["type"]=="section"]["id"]],
-                                 key="newparent")
-parent_id = None if parent=="(root)" else [k for k,v in row_map.items() if v["title"]==parent][0] if df.size>0 else None
+with col3:
+    parent_opts = ["(root)"]+[row_map[i]["title"] for i in df[df["type"]=="section"]["id"]] if not df.empty else ["(root)"]
+    parent = st.selectbox("Parent", parent_opts, key="newparent")
+parent_id = None if parent=="(root)" else [k for k,v in row_map.items() if v["title"]==parent][0] if not df.empty else None
 if st.button("Add"):
     if title_new.strip():
         add_task(title_new, type_new, parent_id, "", "todo", "medium", None)
@@ -117,6 +118,7 @@ def render(parent=None, level=0):
     for tid in children.get(parent, []):
         r = row_map[tid]
         indent = "&nbsp;"* (level*6)
+
         if r["type"]=="section":
             expanded = tid in st.session_state["expanded_sections"]
             icon = "▼" if expanded else "▶"
@@ -125,9 +127,9 @@ def render(parent=None, level=0):
                 else: st.session_state["expanded_sections"].add(tid)
                 st.rerun()
             if expanded: render(tid, level+1)
-        else:
-            # Task row
-            c1,c2,c3,c4,c5,c6,c7 = st.columns([3,2,2,2,2,2,2])
+
+        else:  # Task row
+            c1,c2,c3,c4,c5,c6,c7 = st.columns([3,2,2,2,2,1,2])
             with c1:
                 new_title = st.text_input("Title", value=r["title"], key=f"title_{tid}")
                 if new_title!=r["title"]: update_task(tid, title=new_title)
@@ -147,13 +149,49 @@ def render(parent=None, level=0):
             with c6:
                 if st.button("🗑️", key=f"del_{tid}"):
                     delete_task(tid); st.rerun()
+
             with c7:
-                note = st.text_input("➕ Note", key=f"note_{tid}")
-                if note:
-                    add_note(tid, note); st.rerun()
-            # show last note
-            notes = fetch_notes(tid)
-            if not notes.empty:
-                st.caption(f"📝 Last: {notes.iloc[0]['content']} ({notes.iloc[0]['created_at']})")
+                with st.expander("💬 Notes", expanded=False):
+                    notes = fetch_notes(tid)
+                    if notes.empty:
+                        st.caption("No notes yet. Start the conversation 👇")
+                    else:
+                        # Show oldest first
+                        for _, n in notes.iloc[::-1].iterrows():
+                            sender = r.get("assignee") or "User"
+                            initials = sender[:2].upper()
+                            is_me = sender.lower()=="me"
+
+                            bubble_color = "#d4f8d4" if is_me else "#f1f1f1"
+                            align = "flex-end" if is_me else "flex-start"
+                            text_align = "right" if is_me else "left"
+
+                            st.markdown(
+                                f"""
+                                <div style="display:flex;justify-content:{align};margin:4px 0;">
+                                  <div style="background:{bubble_color};padding:8px 12px;
+                                              border-radius:12px;max-width:70%;
+                                              text-align:{text_align};">
+                                    <b>{sender}</b><br>{n['content']}<br>
+                                    <small style="color:gray">🕒 {n['created_at']}</small>
+                                  </div>
+                                  <div style="background:#888;color:white;
+                                              border-radius:50%;width:28px;height:28px;
+                                              display:flex;align-items:center;
+                                              justify-content:center;margin-left:6px;
+                                              font-size:11px;">{initials}</div>
+                                </div>
+                                """,
+                                unsafe_allow_html=True
+                            )
+
+                    coln1, coln2 = st.columns([5,1])
+                    with coln1:
+                        new_note = st.text_input("Type a note...", key=f"convnote_{tid}")
+                    with coln2:
+                        if st.button("Send", key=f"sendnote_{tid}"):
+                            if new_note.strip():
+                                add_note(tid, new_note.strip())
+                                st.rerun()
 
 render()
