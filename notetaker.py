@@ -139,7 +139,7 @@ def render(parent=None, level=0):
             if expanded:
                 render(tid, level+1)
 
-                # ✅ Inline Add inside section
+                # Inline Add inside section
                 with st.expander(f"➕ Add inside {r['title']}", expanded=False):
                     title_child = st.text_input("Title", key=f"addtitle_{tid}")
                     type_child = st.radio("Type", ["task", "section"], key=f"addtype_{tid}", horizontal=True)
@@ -198,15 +198,15 @@ def render(parent=None, level=0):
                                 unsafe_allow_html=True
                             )
 
-                    # ✅ Safe note input
+                    # ✅ Safe Notes Input
                     input_key = f"convnote_{tid}"
                     note_val = st.text_input("Type a note...", key=input_key, label_visibility="collapsed")
 
                     if st.button("Send", key=f"sendnote_{tid}"):
                         if note_val.strip():
                             add_note(tid, note_val.strip())
-                            # reset input field safely
-                            st.session_state[input_key] = ""
+                            # safely clear key
+                            st.session_state.pop(input_key, None)
                             st.rerun()
 
 render()
