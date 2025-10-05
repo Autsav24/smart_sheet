@@ -3,14 +3,10 @@ import pandas as pd
 import sqlite3
 import uuid
 from datetime import datetime
-from typing import Optional, List, Dict
 
 # ---------------- CONFIG ----------------
 st.set_page_config(page_title="IWMP - Smartsheet Style", layout="wide")
 st.title("🧠 Intelligent Work Management Platform")
-
-if "expanded_sections" not in st.session_state:
-    st.session_state["expanded_sections"] = set()
 
 # ---------------- DB ----------------
 def get_conn():
@@ -69,8 +65,7 @@ def add_task(title, type_, parent_id, assignee, status, priority, due_date):
     conn.commit()
 
 def update_task(task_id, **fields):
-    sets = []
-    vals = []
+    sets, vals = [], []
     for k,v in fields.items():
         sets.append(f"{k}=?")
         vals.append(v)
@@ -89,22 +84,26 @@ def add_note(task_id, content):
                  (uid(), task_id, content, now()))
     conn.commit()
 
-# ---------------- UI ----------------
+# ---------------- DATA ----------------
 df = fetch_tasks()
 row_map = {r["id"]: r for _,r in df.iterrows()}
+
+# build children fresh each rerun (avoid duplicates)
 children = {}
 for _,r in df.iterrows():
     children.setdefault(r["parent_id"], []).append(r["id"])
 
-# Quick add bar
+# ---------------- Quick Add ----------------
 st.subheader("➕ Quick Add")
-col1,col2,col3 = st.columns([3,1,2])
+col1,col2,col3 = st.columns([3,1,3])
 with col1: title_new = st.text_input("Title", key="newtitle")
 with col2: type_new = st.selectbox("Type", ["task","section"], key="newtype")
 with col3:
-    parent_opts = ["(root)"]+[row_map[i]["title"] for i in df[df["type"]=="section"]["id"]] if not df.empty else ["(root)"]
-    parent = st.selectbox("Parent", parent_opts, key="newparent")
-parent_id = None if parent=="(root)" else [k for k,v in row_map.items() if v["title"]==parent][0] if not df.empty else None
+    parent_opts = {"(root)": None}
+    for _, r in df[df["type"]=="section"].iterrows():
+        parent_opts[f"{r['title']} ({r['id'][:4]})"] = r["id"]
+    parent_choice = st.selectbox("Parent", list(parent_opts.keys()), key="newparent")
+parent_id = parent_opts[parent_choice]
 if st.button("Add"):
     if title_new.strip():
         add_task(title_new, type_new, parent_id, "", "todo", "medium", None)
@@ -127,42 +126,38 @@ with h7: st.markdown("**💬 Notes**")
 def render(parent=None, level=0):
     for tid in children.get(parent, []):
         r = row_map[tid]
-        indent = "&nbsp;"* (level*6)
 
         if r["type"]=="section":
-            expanded = tid in st.session_state["expanded_sections"]
-            icon = "▼" if expanded else "▶"
-
+            # ✅ collapse with toggle (persists state)
+            expanded = st.toggle(f"📂 {r['title']}", key=f"toggle_{tid}", value=False, label_visibility="visible")
             col_s1, col_s2 = st.columns([6,1])
-            with col_s1:
-                if st.button(f"{icon} 📂 {r['title']}", key=f"sec_{tid}"):
-                    if expanded: st.session_state["expanded_sections"].remove(tid)
-                    else: st.session_state["expanded_sections"].add(tid)
-                    st.rerun()
             with col_s2:
                 if st.button("🗑️", key=f"del_sec_{tid}"):
-                    delete_task(tid)  # cascade delete children
+                    delete_task(tid)
                     st.rerun()
 
-            if expanded: render(tid, level+1)
+            if expanded:
+                render(tid, level+1)
 
         else:  # Task row
             c1,c2,c3,c4,c5,c6,c7 = st.columns([3,2,2,2,2,1,2])
             with c1:
-                new_title = st.text_input("", value=r["title"], key=f"title_{tid}")
+                new_title = st.text_input("", value=r["title"], key=f"title_{tid}", label_visibility="collapsed")
                 if new_title!=r["title"]: update_task(tid, title=new_title)
             with c2:
-                assignee = st.text_input("", value=r.get("assignee") or "", key=f"asg_{tid}")
+                assignee = st.text_input("", value=r.get("assignee") or "", key=f"asg_{tid}", label_visibility="collapsed")
                 if assignee!=(r.get("assignee") or ""): update_task(tid, assignee=assignee)
             with c3:
-                status = st.selectbox("", STATUS_OPTS, index=STATUS_OPTS.index(r.get("status") or "todo"), key=f"st_{tid}")
+                status = st.selectbox("", STATUS_OPTS, index=STATUS_OPTS.index(r.get("status") or "todo"),
+                                      key=f"st_{tid}", label_visibility="collapsed")
                 if status!=(r.get("status") or "todo"): update_task(tid, status=status)
             with c4:
-                priority = st.selectbox("", PRIORITY_OPTS, index=PRIORITY_OPTS.index(r.get("priority") or "medium"), key=f"pr_{tid}")
+                priority = st.selectbox("", PRIORITY_OPTS, index=PRIORITY_OPTS.index(r.get("priority") or "medium"),
+                                        key=f"pr_{tid}", label_visibility="collapsed")
                 if priority!=(r.get("priority") or "medium"): update_task(tid, priority=priority)
             with c5:
                 due = pd.to_datetime(r.get("due_date"), errors="coerce").date() if r.get("due_date") else None
-                due_new = st.date_input("", value=due, key=f"due_{tid}")
+                due_new = st.date_input("", value=due, key=f"due_{tid}", label_visibility="collapsed")
                 if due_new!=(due): update_task(tid, due_date=str(due_new) if due_new else None)
             with c6:
                 if st.button("🗑️", key=f"del_{tid}"):
@@ -176,18 +171,11 @@ def render(parent=None, level=0):
                         for _, n in notes.iloc[::-1].iterrows():
                             sender = r.get("assignee") or "User"
                             initials = sender[:2].upper()
-                            is_me = sender.lower()=="me"
-
-                            bubble_color = "#d4f8d4" if is_me else "#f1f1f1"
-                            align = "flex-end" if is_me else "flex-start"
-                            text_align = "right" if is_me else "left"
-
                             st.markdown(
                                 f"""
-                                <div style="display:flex;justify-content:{align};margin:4px 0;">
-                                  <div style="background:{bubble_color};padding:8px 12px;
-                                              border-radius:12px;max-width:70%;
-                                              text-align:{text_align};">
+                                <div style="display:flex;justify-content:flex-start;margin:4px 0;">
+                                  <div style="background:#f1f1f1;padding:8px 12px;
+                                              border-radius:12px;max-width:70%;">
                                     <b>{sender}</b><br>{n['content']}<br>
                                     <small style="color:gray">🕒 {n['created_at']}</small>
                                   </div>
@@ -201,7 +189,7 @@ def render(parent=None, level=0):
                                 unsafe_allow_html=True
                             )
 
-                    # session_state draft note
+                    # note input fix
                     input_key = f"convnote_{tid}"
                     if input_key not in st.session_state:
                         st.session_state[input_key] = ""
